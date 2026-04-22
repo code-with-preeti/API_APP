@@ -21,3 +21,4 @@ prisma/dev.db
 # Optional OS files
 .DS_Store
 Thumbs.db
+api_sentinel.zip
