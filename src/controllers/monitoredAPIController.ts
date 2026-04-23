@@ -45,6 +45,39 @@ export const getAPIs = async (req: Request & { user?: any }, res: Response) => {
   }
 };
 
+// ----------------- STREAM APIs (SSE) -----------------
+export const streamAPIs = async (req: Request & { user?: any }, res: Response) => {
+  const userId = req.user.userId;
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const sendSnapshot = async () => {
+    try {
+      const apis = await prisma.monitoredAPI.findMany({
+        where: { userId },
+        orderBy: { updatedAt: "desc" },
+      });
+      res.write(`event: snapshot\n`);
+      res.write(`data: ${JSON.stringify(apis)}\n\n`);
+    } catch (err) {
+      res.write(`event: error\n`);
+      res.write(`data: ${JSON.stringify({ message: "Failed to stream APIs" })}\n\n`);
+    }
+  };
+
+  await sendSnapshot();
+  const timer = setInterval(() => {
+    void sendSnapshot();
+  }, 5_000);
+
+  req.on("close", () => {
+    clearInterval(timer);
+    res.end();
+  });
+};
+
 // ----------------- DELETE API -----------------
 export const deleteAPI = async (req: Request & { user?: any }, res: Response) => {
   const { id } = req.params;

@@ -7,12 +7,13 @@ export const authenticate = (
   next: NextFunction
 ) => {
   const authHeader = req.headers.authorization;
+  const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
 
-  if (!authHeader) {
+  if (!authHeader && !queryToken) {
     return res.status(401).json({ message: "No token provided" });
   }
 
-  const token = authHeader.split(" ")[1];
+  const token = queryToken ?? authHeader!.split(" ")[1];
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET!);

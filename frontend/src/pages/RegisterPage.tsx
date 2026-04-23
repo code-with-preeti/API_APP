@@ -4,6 +4,18 @@ import { apiFetch } from '../lib/api'
 
 type RegisterResponse = { message: string; userId: number }
 
+function getReadableError(err: unknown): string {
+  if (!err || typeof err !== 'object') return 'Registration failed. Please try again.'
+  const maybeMessage = (err as { message?: string }).message
+  if (!maybeMessage) return 'Registration failed. Please try again.'
+  try {
+    const parsed = JSON.parse(maybeMessage) as { message?: string }
+    return parsed.message || maybeMessage
+  } catch {
+    return maybeMessage
+  }
+}
+
 export function RegisterPage() {
   const nav = useNavigate()
   const [name, setName] = useState('')
@@ -68,7 +80,7 @@ export function RegisterPage() {
                   })
                   nav('/login')
                 } catch (err) {
-                  setError('Registration failed. Try a different email.')
+                  setError(getReadableError(err))
                 } finally {
                   setSubmitting(false)
                 }

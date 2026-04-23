@@ -1,47 +1,34 @@
-# API Sentinel
+# API Sentinel (Phase 2)
 
-Backend service that lets users register/login and monitor APIs on a fixed interval.  
-It stores status + response time history (last 10 checks) and calculates uptime.
+Interview-ready API monitoring project with:
 
-## Prerequisites
+- Postman-style monitor creation (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`)
+- Redis + BullMQ queue architecture
+- Separate `scheduler`, `worker`, and `server` processes
+- WebSocket real-time updates
+- PostgreSQL history retention (latest 10 checks per API)
+- Rate limiting + auth-protected API endpoints
 
-- Node.js \(>= 18; you have Node 22\)
-- PostgreSQL running locally
+## Tech Stack
 
-## 1) Configure environment
+- Backend: Node.js, Express, Prisma, PostgreSQL, Redis, BullMQ, WebSocket
+- Frontend: React + Vite + TypeScript
 
-Create/update `.env` in the repo root:
-
-```env
-DATABASE_URL="postgres://<user>:<password>@localhost:5432/<db>?schema=public"
-JWT_SECRET="change-me"
-# Optional (comma-separated). Example:
-# CORS_ORIGIN="http://localhost:5173"
-```
-
-### Quick local Postgres setup (Ubuntu)
-
-If you want a dedicated DB user/password (recommended):
+## 1) Run infrastructure (Postgres + Redis)
 
 ```bash
-sudo -u postgres psql
+docker compose up -d
 ```
 
-Then inside psql:
+## 2) Configure environment
 
-```sql
-CREATE USER api_sentinel WITH PASSWORD 'mysecret';
-CREATE DATABASE My_api_senital OWNER api_sentinel;
-GRANT ALL PRIVILEGES ON DATABASE My_api_senital TO api_sentinel;
+Copy `.env.example` to `.env` and adjust if needed:
+
+```bash
+cp .env.example .env
 ```
 
-And set:
-
-```env
-DATABASE_URL="postgres://api_sentinel:mysecret@localhost:5432/My_api_senital?schema=public"
-```
-
-## 2) Install & migrate
+## 3) Install and initialize backend
 
 ```bash
 npm install
@@ -49,17 +36,19 @@ npm run prisma:generate
 npm run prisma:migrate
 ```
 
-## 3) Run backend (server + worker)
+## 4) Run backend processes
+
+Runs all 3 processes in one command:
 
 ```bash
 npm run dev
 ```
 
-Backend runs at `http://localhost:4000`.
+- API + WebSocket server: `src/server.ts` on `http://localhost:4000`
+- Scheduler: `src/scheduler.ts` (every 5 seconds by default)
+- Worker: `src/worker.ts` (queue consumer, configurable concurrency)
 
-## Frontend (React)
-
-The frontend lives in `frontend/`.
+## 5) Run frontend
 
 ```bash
 cd frontend
@@ -67,5 +56,14 @@ npm install
 npm run dev
 ```
 
-Frontend runs at `http://localhost:5173` and calls the backend via Vite proxy (`/api` → `http://localhost:4000`).
+Frontend runs at `http://localhost:5173`.
+
+## Architecture (Simple Flow)
+
+1. Scheduler reads all monitors and pushes jobs to Redis queue.
+2. Worker consumes jobs, calls monitored APIs, stores checks in Postgres.
+3. Worker trims each API history to latest 10 rows.
+4. Worker publishes update events over Redis pub/sub.
+5. Server broadcasts user-specific updates to browser via WebSocket.
+6. Dashboard updates live every 5 seconds.
 

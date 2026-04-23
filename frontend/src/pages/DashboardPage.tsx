@@ -1,357 +1,354 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { FormEvent } from 'react'
 import { apiFetch } from '../lib/api'
+import { getToken } from '../lib/storage'
 
-type MonitoredApi = {
-  id: number
-  name: string
-  url: string
-  method?: string
-  status: string
-  createdAt?: string
-  updatedAt?: string
-}
-
-type ApiCheck = {
-  id: number
-  apiId: number
-  status: string
-  responseTime: number | null
-  createdAt: string
-}
-
+/* --- UI Component for Status --- */
 function StatusPill({ status }: { status: string }) {
-  const normalized = status?.toLowerCase?.() ?? 'unknown'
-  const theme =
-    normalized === 'up'
-      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-      : normalized === 'down'
-        ? 'bg-rose-50 text-rose-700 border-rose-200'
-        : 'bg-slate-50 text-slate-700 border-slate-200'
+  const s = status?.toLowerCase() || 'unknown'
+  const themes: Record<string, string> = {
+    up: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+    down: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+    throttled: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  }
+  const theme = themes[s] || 'bg-white/5 text-white/40 border-white/10'
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${theme}`}>
-      {normalized.toUpperCase()}
+    <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-tighter ${theme}`}>
+      {s}
     </span>
   )
 }
 
+
 export function DashboardPage() {
-  const [apis, setApis] = useState<MonitoredApi[]>([])
-  const [loading, setLoading] = useState(true)
+  const [apis, setApis] = useState<any[]>([])
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [history, setHistory] = useState<any[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [autoRefresh, setAutoRefresh] = useState(true)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
-
+  const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newUrl, setNewUrl] = useState('')
-  const [newMethod, setNewMethod] = useState<'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'>('GET')
-  const [newBody, setNewBody] = useState('')
+  const [formError, setFormError] = useState<string | null>(null)
+  const [wsConnected, setWsConnected] = useState(false)
 
-  const [selected, setSelected] = useState<MonitoredApi | null>(null)
-  const [history, setHistory] = useState<ApiCheck[]>([])
-  const [uptime, setUptime] = useState<number | null>(null)
-  const [sideLoading, setSideLoading] = useState(false)
+  const [name, setName] = useState('')
+  const [url, setUrl] = useState('')
+  const [method, setMethod] = useState('GET')
+  const [headersText, setHeadersText] = useState('{\n  "Content-Type": "application/json"\n}')
+  const [bodyText, setBodyText] = useState('{\n  "ping": "sentinel"\n}')
+  const [authType, setAuthType] = useState<'none' | 'bearer' | 'apiKey'>('none')
+  const [bearerToken, setBearerToken] = useState('')
+  const [apiKeyHeaderName, setApiKeyHeaderName] = useState('x-api-key')
+  const [apiKeyValue, setApiKeyValue] = useState('')
 
-  const canCreate = useMemo(() => newName.trim() && newUrl.trim(), [newName, newUrl])
+  const canSendBody = useMemo(() => !['GET', 'HEAD', 'OPTIONS'].includes(method), [method])
+  const showAdvancedRequestFields = useMemo(
+    () => ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method),
+    [method],
+  )
+  const selected = useMemo(() => apis.find((api) => api.id === selectedId) ?? null, [apis, selectedId])
 
-  async function loadApis() {
-    setLoading(true)
-    setError(null)
+  const loadData = async () => {
     try {
-      const data = await apiFetch<MonitoredApi[]>('/api/monitored-apis')
+      const data = await apiFetch<any[]>('/api/monitored-apis')
       setApis(data)
-      setLastUpdatedAt(new Date())
-    } catch (e) {
-      setError('Failed to load monitored APIs. Is the backend running and are you logged in?')
+      setError(null)
+    } catch (e: any) {
+      if (e.status === 429) {
+        setError('RATE LIMIT REACHED: Backend is throttling your requests.')
+      } else {
+        setError('OFFLINE: Backend server is unreachable.')
+      }
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    void loadApis()
+    void loadData()
+    const interval = setInterval(() => void loadData(), 5000)
+    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {
-    if (!autoRefresh) return
-    const id = window.setInterval(() => {
-      void loadApis()
-    }, 10_000)
-    return () => window.clearInterval(id)
-  }, [autoRefresh])
+    const token = getToken()
+    if (!token) return
 
-  async function openDetails(api: MonitoredApi) {
-    setSelected(api)
-    setSideLoading(true)
-    setHistory([])
-    setUptime(null)
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    const socket = new WebSocket(`${wsProtocol}://${window.location.host}/ws?token=${encodeURIComponent(token)}`)
+    socket.onopen = () => setWsConnected(true)
+    socket.onclose = () => setWsConnected(false)
+    socket.onerror = () => setWsConnected(false)
+    socket.onmessage = (event) => {
+      const payload = JSON.parse(event.data) as {
+        type?: string
+        apiId?: number
+        status?: string
+      }
+      if (payload.type !== 'api-status-updated' || !payload.apiId || !payload.status) return
+      setApis((prev) =>
+        prev.map((api) => (api.id === payload.apiId ? { ...api, status: payload.status } : api)),
+      )
+      if (selectedId === payload.apiId) {
+        void fetchHistory(payload.apiId)
+      }
+    }
+    return () => socket.close()
+  }, [selectedId])
+
+  const fetchHistory = async (apiOrId: any) => {
+    const apiId = typeof apiOrId === 'number' ? apiOrId : apiOrId.id
+    setSelectedId(apiId)
     try {
-      const [h, u] = await Promise.all([
-        apiFetch<ApiCheck[]>(`/api/monitored-apis/${api.id}/history`),
-        apiFetch<{ apiId: number; uptime: number }>(`/api/monitored-apis/${api.id}/uptime`),
-      ])
+      const h = await apiFetch<any[]>(`/api/monitored-apis/${apiId}/history`)
       setHistory(h)
-      setUptime(u.uptime)
-    } catch (e) {
-      // ignore; shown in UI
+    } catch {
+      console.error('History fetch failed')
+    }
+  }
+
+  const handleCreate = async (e: FormEvent) => {
+    e.preventDefault()
+    setFormError(null)
+    setCreating(true)
+
+    try {
+      const rawHeaders = showAdvancedRequestFields && headersText.trim() ? JSON.parse(headersText) : {}
+      const authHeaders: Record<string, string> = {}
+      if (showAdvancedRequestFields && authType === 'bearer' && bearerToken.trim()) {
+        authHeaders.Authorization = `Bearer ${bearerToken.trim()}`
+      }
+      if (showAdvancedRequestFields && authType === 'apiKey' && apiKeyHeaderName.trim() && apiKeyValue.trim()) {
+        authHeaders[apiKeyHeaderName.trim()] = apiKeyValue.trim()
+      }
+      const mergedHeaders = { ...rawHeaders, ...authHeaders }
+      const headers = Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined
+      const body =
+        showAdvancedRequestFields && canSendBody && bodyText.trim() ? JSON.parse(bodyText) : undefined
+      const created = await apiFetch<any>('/api/monitored-apis', {
+        method: 'POST',
+        json: {
+          name,
+          url,
+          method,
+          headers,
+          body,
+        },
+      })
+      setApis((prev) => [created, ...prev])
+      setName('')
+      setUrl('')
+      setMethod('GET')
+      setAuthType('none')
+      setBearerToken('')
+      setApiKeyValue('')
+      setBodyText('{\n  "ping": "sentinel"\n}')
+      setFormError(null)
+    } catch (err: any) {
+      setFormError(err?.message || 'Failed to create monitor')
     } finally {
-      setSideLoading(false)
+      setCreating(false)
     }
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_420px]">
-      <div className="space-y-4">
-        <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-5 shadow-2xl backdrop-blur">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <div className="text-xl font-semibold text-white">Monitored APIs</div>
-              <div className="text-sm text-white/70">
-                Create monitors, then the worker records status + response time.
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/60">
-                <button
-                  className={`rounded-full border px-2 py-1 ${
-                    autoRefresh
-                      ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
-                      : 'border-white/10 bg-white/5 text-white/70'
-                  }`}
-                  onClick={() => setAutoRefresh((v) => !v)}
-                >
-                  {autoRefresh ? 'Auto-refresh: ON' : 'Auto-refresh: OFF'}
-                </button>
-                <div>
-                  Last updated:{' '}
-                  <span className="font-semibold text-white">
-                    {lastUpdatedAt ? lastUpdatedAt.toLocaleTimeString() : '—'}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <button
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-white/10"
-              onClick={() => loadApis()}
-            >
-              Refresh
-            </button>
-          </div>
+    <div className="min-h-screen bg-[#050505] text-white p-6 font-sans">
+      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6">
 
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-6">
-            <label className="block sm:col-span-1">
-              <div className="mb-1 text-sm font-medium text-white/90">Name</div>
-              <input
-                className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none ring-violet-300/30 placeholder:text-white/40 focus:ring-4"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="My API"
-              />
-            </label>
-            <label className="block sm:col-span-1">
-              <div className="mb-1 text-sm font-medium text-white/90">Method</div>
-              <select
-                className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none ring-violet-300/30 focus:ring-4"
-                value={newMethod}
-                onChange={(e) => setNewMethod(e.target.value as any)}
+        {/* Main Section */}
+        <div className="space-y-6">
+          <header className="flex justify-between items-center p-6 bg-white/5 border border-white/10 rounded-[2rem] shadow-2xl">
+            <div>
+              <h1 className="text-2xl font-black tracking-tight italic text-violet-400">SENTINEL_DASH</h1>
+              <p className="text-white/40 text-[10px] uppercase tracking-[0.3em] mt-1">
+                {loading ? 'Initializing...' : 'Operational'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div
+                className={`text-[9px] font-black px-3 py-2 rounded-full border uppercase tracking-widest ${
+                  wsConnected
+                    ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
+                    : 'text-amber-300 bg-amber-500/10 border-amber-500/30'
+                }`}
               >
-                <option value="GET">GET</option>
-                <option value="POST">POST</option>
-                <option value="PUT">PUT</option>
-                <option value="PATCH">PATCH</option>
-                <option value="DELETE">DELETE</option>
-              </select>
-            </label>
-            <label className="block sm:col-span-4">
-              <div className="mb-1 text-sm font-medium text-white/90">URL</div>
-              <input
-                className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none ring-violet-300/30 placeholder:text-white/40 focus:ring-4"
-                value={newUrl}
-                onChange={(e) => setNewUrl(e.target.value)}
-                placeholder="https://example.com/health"
-              />
-            </label>
-          </div>
-
-          {newMethod === 'GET' ? null : (
-            <div className="mt-3">
-              <div className="mb-1 text-sm font-medium text-white/90">JSON body (optional)</div>
-              <textarea
-                className="h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none ring-violet-300/30 placeholder:text-white/40 focus:ring-4"
-                placeholder='Example: {"ping":"hello"}'
-                value={newBody}
-                onChange={(e) => setNewBody(e.target.value)}
-              />
-              <div className="mt-1 text-xs text-white/60">
-                Only used for POST/PUT/PATCH/DELETE. Must be valid JSON if provided.
+                {wsConnected ? 'WS LIVE' : 'WS RETRYING'}
               </div>
-            </div>
-          )}
-
-          <div className="mt-3 flex items-center justify-between">
-            <div className="text-xs text-white/60">
-              Tip: for best results, monitor a stable health endpoint.
-            </div>
-            <button
-              disabled={!canCreate || creating}
-              className="rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-3 py-2 text-sm font-semibold text-white shadow-lg shadow-fuchsia-500/10 hover:from-violet-400 hover:to-fuchsia-400 disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={async () => {
-                if (!canCreate) return
-                setCreating(true)
-                try {
-                  let parsedBody: unknown = undefined
-                  if (newMethod !== 'GET' && newBody.trim()) {
-                    parsedBody = JSON.parse(newBody)
-                  }
-                  await apiFetch<MonitoredApi>('/api/monitored-apis', {
-                    method: 'POST',
-                    json: { name: newName, url: newUrl, method: newMethod, body: parsedBody },
-                  })
-                  setNewName('')
-                  setNewUrl('')
-                  setNewMethod('GET')
-                  setNewBody('')
-                  await loadApis()
-                } catch (e) {
-                  setError(
-                    newBody.trim()
-                      ? 'Failed to create monitor. Check URL/body JSON and backend logs.'
-                      : 'Failed to create monitor. Check URL and backend logs.',
-                  )
-                } finally {
-                  setCreating(false)
-                }
-              }}
-            >
-              {creating ? 'Creating…' : 'Add monitor'}
-            </button>
-          </div>
-        </div>
-
-        <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/5 shadow-2xl backdrop-blur">
-          <div className="border-b border-white/10 px-5 py-3">
-            <div className="text-sm font-semibold text-white">Your monitors</div>
-          </div>
-
-          {error ? (
-            <div className="px-5 py-4 text-sm text-rose-200">{error}</div>
-          ) : null}
-
-          {loading ? (
-            <div className="px-5 py-8 text-sm text-white/70">Loading…</div>
-          ) : apis.length === 0 ? (
-            <div className="px-5 py-8 text-sm text-white/70">No monitors yet.</div>
-          ) : (
-            <ul className="divide-y divide-white/10">
-              {apis.map((api) => (
-                <li key={api.id} className="px-5 py-4">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <button
-                      className="text-left"
-                      onClick={() => openDetails(api)}
-                      title="View details"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm font-semibold text-white">{api.name}</div>
-                        <StatusPill status={api.status} />
-                      </div>
-                      <div className="mt-0.5 text-xs text-white/60">{api.url}</div>
-                    </button>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-white/10"
-                        onClick={() => openDetails(api)}
-                      >
-                        History
-                      </button>
-                      <button
-                        className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm font-medium text-rose-200 hover:bg-rose-500/15"
-                        onClick={async () => {
-                          await apiFetch(`/api/monitored-apis/${api.id}`, { method: 'DELETE' })
-                          if (selected?.id === api.id) setSelected(null)
-                          await loadApis()
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-
-      <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-2xl backdrop-blur">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <div className="text-sm font-semibold text-white">Details</div>
-            <div className="text-xs text-white/60">History & uptime</div>
-          </div>
-          {selected ? (
-            <button
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-white/10"
-              onClick={() => setSelected(null)}
-            >
-              Close
-            </button>
-          ) : null}
-        </div>
-
-        {!selected ? (
-          <div className="mt-6 rounded-xl border border-dashed border-white/10 p-4 text-sm text-white/70">
-            Select a monitor to view its history and uptime.
-          </div>
-        ) : sideLoading ? (
-          <div className="mt-6 text-sm text-white/70">Loading details…</div>
-        ) : (
-          <div className="mt-4 space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-              <div className="text-sm font-semibold text-white">{selected.name}</div>
-              <div className="mt-0.5 text-xs text-white/60">{selected.url}</div>
-              <div className="mt-2 flex items-center gap-2">
-                <StatusPill status={selected.status} />
-                <div className="text-xs text-white/70">
-                  Uptime:{' '}
-                  <span className="font-semibold text-white">
-                    {uptime === null ? '—' : `${uptime}%`}
-                  </span>
+              {error && (
+                <div className="text-rose-400 text-[9px] font-black bg-rose-400/10 px-4 py-2 rounded-full border border-rose-400/30 animate-pulse tracking-widest uppercase">
+                  {error}
                 </div>
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/60">
-                Last 10 checks
-              </div>
-              {history.length === 0 ? (
-                <div className="text-sm text-white/70">No checks yet. Wait for the worker to run.</div>
-              ) : (
-                <ul className="space-y-2">
-                  {history.map((h) => (
-                    <li key={h.id} className="rounded-2xl border border-white/10 bg-black/10 p-3">
-                      <div className="flex items-center justify-between">
-                        <StatusPill status={h.status} />
-                        <div className="text-xs text-white/60">
-                          {new Date(h.createdAt).toLocaleString()}
-                        </div>
-                      </div>
-                      <div className="mt-1 text-xs text-white/70">
-                        Response time:{' '}
-                        <span className="font-medium text-white">
-                          {h.responseTime === null ? '—' : `${h.responseTime}ms`}
-                        </span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
               )}
             </div>
+          </header>
+
+          <form onSubmit={handleCreate} className="p-5 rounded-3xl border border-white/10 bg-white/5 space-y-3">
+            <div className="text-xs uppercase tracking-[0.2em] text-white/40 font-semibold">New monitor (Postman style)</div>
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_120px] gap-3">
+              <input
+                className="px-4 py-2 rounded-xl bg-black/30 border border-white/10 text-sm"
+                placeholder="Monitor Name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+              <select
+                className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm"
+                value={method}
+                onChange={(e) => setMethod(e.target.value)}
+              >
+                {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => (
+                  <option key={m} value={m} className="bg-black">
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <input
+              className="w-full px-4 py-2 rounded-xl bg-black/30 border border-white/10 text-sm font-mono"
+              placeholder="https://api.example.com/resource"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+            />
+            {showAdvancedRequestFields && (
+              <div className="grid grid-cols-1 gap-3">
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-3 space-y-2">
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-white/50 font-semibold">
+                    Authorization
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <select
+                      className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm"
+                      value={authType}
+                      onChange={(e) => setAuthType(e.target.value as 'none' | 'bearer' | 'apiKey')}
+                    >
+                      <option value="none" className="bg-black">
+                        No Auth
+                      </option>
+                      <option value="bearer" className="bg-black">
+                        Bearer Token
+                      </option>
+                      <option value="apiKey" className="bg-black">
+                        API Key Header
+                      </option>
+                    </select>
+                    {authType === 'bearer' && (
+                      <input
+                        className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm"
+                        value={bearerToken}
+                        onChange={(e) => setBearerToken(e.target.value)}
+                        placeholder="Paste bearer token"
+                      />
+                    )}
+                    {authType === 'apiKey' && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm"
+                          value={apiKeyHeaderName}
+                          onChange={(e) => setApiKeyHeaderName(e.target.value)}
+                          placeholder="Header name"
+                        />
+                        <input
+                          className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm"
+                          value={apiKeyValue}
+                          onChange={(e) => setApiKeyValue(e.target.value)}
+                          placeholder="Header value"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-3 space-y-2">
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-white/50 font-semibold">Headers</div>
+                    <textarea
+                      className="w-full h-28 px-4 py-2 rounded-xl bg-black/30 border border-white/10 text-xs font-mono"
+                      value={headersText}
+                      onChange={(e) => setHeadersText(e.target.value)}
+                    />
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-3 space-y-2">
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-white/50 font-semibold">Payload</div>
+                    <textarea
+                      className="w-full h-28 px-4 py-2 rounded-xl bg-black/30 border border-white/10 text-xs font-mono"
+                      value={bodyText}
+                      onChange={(e) => setBodyText(e.target.value)}
+                      disabled={!canSendBody}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+            {formError && <div className="text-rose-300 text-xs">{formError}</div>}
+            <button
+              type="submit"
+              disabled={creating}
+              className="px-4 py-2 rounded-xl bg-violet-500 hover:bg-violet-400 disabled:opacity-50 text-sm font-semibold"
+            >
+              {creating ? 'Creating...' : 'Create monitor'}
+            </button>
+          </form>
+
+          <div className="grid gap-3">
+            {apis.map(api => (
+              <div 
+                key={api.id}
+                onClick={() => fetchHistory(api)}
+                className={`p-5 rounded-3xl border transition-all cursor-pointer flex justify-between items-center group ${
+                  selected?.id === api.id ? 'bg-violet-600/10 border-violet-500/50' : 'bg-white/5 border-white/10 hover:border-white/20'
+                }`}
+              >
+                <div className="flex items-center gap-5">
+                  <div className={`w-2 h-2 rounded-full ${api.status === 'up' ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-rose-500 shadow-[0_0_10px_#f43f5e]'}`} />
+                  <div>
+                    <span className="font-bold text-sm tracking-tight">{api.name}</span>
+                    <div className="text-[9px] text-violet-300 font-mono mt-0.5">{api.method}</div>
+                    <div className="text-[10px] text-white/30 font-mono mt-0.5">{api.url}</div>
+                  </div>
+                </div>
+                <StatusPill status={api.status} />
+              </div>
+            ))}
           </div>
-        )}
+        </div>
+
+        {/* Intelligence Sidebar */}
+        <div className="bg-white/5 border border-white/10 rounded-[2.5rem] p-6 h-[calc(100vh-3rem)] sticky top-6 flex flex-col shadow-2xl backdrop-blur-xl">
+          <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20 mb-8 text-center">Node Logs</h2>
+          
+          {!selected ? (
+            <div className="flex-1 flex flex-col items-center justify-center opacity-10 space-y-4">
+              <div className="text-6xl">⊘</div>
+              <p className="text-[10px] uppercase font-bold tracking-widest">Select Node</p>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-hidden flex flex-col">
+              <div className="mb-6 p-5 bg-black/40 rounded-[1.5rem] border border-white/10">
+                <h3 className="font-bold text-base mb-2 truncate">{selected.name}</h3>
+                <StatusPill status={selected.status} />
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                {history.length === 0 ? (
+                  <p className="text-center text-[10px] text-white/20 uppercase mt-10 tracking-widest">No Traffic Data</p>
+                ) : (
+                  history.map(h => (
+                    <div key={h.id} className="flex justify-between items-center bg-white/5 p-3 rounded-2xl border border-white/5 group hover:border-white/10 transition-colors">
+                      <StatusPill status={h.status} />
+                      <span className="text-[9px] font-mono text-white/30 group-hover:text-white/60">
+                        {new Date(h.createdAt).toLocaleTimeString()}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
       </div>
     </div>
-  )
+  );
 }
-

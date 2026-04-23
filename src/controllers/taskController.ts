@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import crypto from "crypto";
 import prisma from "../prismaClient";
 
 export const getTasks = async (
@@ -20,6 +21,7 @@ export const createTask = async (
 
   const task = await prisma.task.create({
     data: {
+      apiKey: `task_${crypto.randomBytes(16).toString("hex")}`,
       title,
       userId: req.user.userId,
     },
