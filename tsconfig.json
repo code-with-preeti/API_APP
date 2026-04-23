@@ -5,6 +5,8 @@
     "moduleResolution": "node",
     "esModuleInterop": true,
     "strict": true,
+    "types": ["node"],
+    "typeRoots": ["./node_modules/@types"],
     "skipLibCheck": true,
     "outDir": "dist",
     "ignoreDeprecations": "5.0"

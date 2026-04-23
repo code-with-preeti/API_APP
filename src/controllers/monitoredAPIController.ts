@@ -4,6 +4,11 @@ import { getApiHistory } from "../services/apiHistoryService";
 import { calculateUptime } from "../services/uptimeService";
 import { HttpMethod, Prisma } from "@prisma/client";
 
+function parseIdParam(value: string | string[] | undefined): number {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return Number(raw);
+}
+
 // ----------------- CREATE API -----------------
 export const createAPI = async (req: Request & { user?: any }, res: Response) => {
   const { name, url, method, headers, body } = req.body;
@@ -80,16 +85,20 @@ export const streamAPIs = async (req: Request & { user?: any }, res: Response) =
 
 // ----------------- DELETE API -----------------
 export const deleteAPI = async (req: Request & { user?: any }, res: Response) => {
-  const { id } = req.params;
+  const id = parseIdParam(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ message: "Invalid API id" });
+    return;
+  }
   try {
     const api = await prisma.monitoredAPI.findUnique({
-      where: { id: parseInt(id) },
+      where: { id },
     });
 
     if (!api || api.userId !== req.user.userId)
       return res.status(404).json({ message: "API not found" });
 
-    await prisma.monitoredAPI.delete({ where: { id: parseInt(id) } });
+    await prisma.monitoredAPI.delete({ where: { id } });
     res.json({ message: "API deleted" });
   } catch (err) {
     res.status(500).json({ message: "Error deleting monitored API", error: err });

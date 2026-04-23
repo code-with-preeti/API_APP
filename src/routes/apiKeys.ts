@@ -6,6 +6,11 @@ const router = Router();
 const prisma = new PrismaClient();
 const MAX_KEYS_PER_USER = 10;
 
+function parseIdParam(value: string | string[] | undefined): number {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return Number(raw);
+}
+
 function generateApiKey(): string {
   return `sentinel_${crypto.randomBytes(20).toString("hex")}`;
 }
@@ -51,7 +56,8 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
 
 router.delete("/:id", async (req: Request, res: Response): Promise<void> => {
   const userId: number = (req as any).userId;
-  const id = parseInt(req.params.id);
+  const id = parseIdParam(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid API key id" }); return; }
   try {
     const apiKey = await prisma.apiKey.findUnique({ where: { id } });
     if (!apiKey) { res.status(404).json({ error: "API key not found" }); return; }
@@ -66,7 +72,8 @@ router.delete("/:id", async (req: Request, res: Response): Promise<void> => {
 
 router.patch("/:id/rename", async (req: Request, res: Response): Promise<void> => {
   const userId: number = (req as any).userId;
-  const id = parseInt(req.params.id);
+  const id = parseIdParam(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid API key id" }); return; }
   const { name } = req.body as { name?: string };
   if (!name || name.trim().length === 0) { res.status(400).json({ error: "New name is required" }); return; }
   try {
