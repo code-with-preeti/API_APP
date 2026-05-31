@@ -15,13 +15,13 @@ import { apiKeyAuth } from "./middleware/apiKeyAuth";
 import { rateLimiter, getRateLimitStats } from "./middleware/rateLimiter";
 import { redisSubscriber } from "./lib/redis";
 import { API_UPDATE_CHANNEL } from "./queues/apiCheckQueue";
-// ─────────────────────────────────────────────────────────────────────────────
 
 dotenv.config();
+
 const app = express();
 const server = http.createServer(app);
 const wsServer = new WebSocketServer({ server, path: "/ws" });
-const clients = new Map<WebSocket, number>();
+const clients = new Map<WebSocket, number>(); 
 
 app.use(
   cors({
@@ -29,6 +29,7 @@ app.use(
     credentials: true,
   })
 );
+
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
@@ -39,27 +40,6 @@ app.use("/api", publicRoutes);
 // ── NEW: API key management (JWT-protected — uses your existing auth cookie) ─
 app.use("/api/keys", apiKeyRoutes);
 
-// ── NEW: Rate limit status endpoint ─────────────────────────────────────────
-app.get("/api/rate-limit/status", apiKeyAuth, (req, res) => {
-  const userId: string = (req as any).userId;
-  const stats = getRateLimitStats(userId);
-  res.json({
-    ...stats,
-    resetIn: Math.max(0, Math.ceil((stats.resetAt - Date.now()) / 1000)),
-  });
-});
-
-app.use(
-  (
-    err: unknown,
-    _req: express.Request,
-    res: express.Response,
-    _next: express.NextFunction
-  ) => {
-    console.error("Unhandled error:", err);
-    res.status(500).json({ message: "Internal server error" });
-  }
-);
 
 wsServer.on("connection", (socket, request) => {
   try {
@@ -83,9 +63,12 @@ wsServer.on("connection", (socket, request) => {
 });
 
 void redisSubscriber.subscribe(API_UPDATE_CHANNEL);
+
 redisSubscriber.on("message", (channel, payload) => {
   if (channel !== API_UPDATE_CHANNEL) return;
+
   let event: { userId?: number };
+
   try {
     event = JSON.parse(payload);
   } catch {
@@ -100,6 +83,8 @@ redisSubscriber.on("message", (channel, payload) => {
   }
 });
 
-server.listen(4000, () => {
-  console.log("Server + WS running on http://localhost:4000");
+const port = Number(process.env.PORT ?? 4000);
+
+server.listen(port, () => {
+  console.log(`Server + WS running on http://localhost:${port}`);
 });

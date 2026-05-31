@@ -1,69 +1,58 @@
-# API Sentinel (Phase 2)
+# API Sentinel
 
-Interview-ready API monitoring project with:
+API monitoring app with a React dashboard and a Node.js backend.
 
-- Postman-style monitor creation (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`)
-- Redis + BullMQ queue architecture
-- Separate `scheduler`, `worker`, and `server` processes
-- WebSocket real-time updates
-- PostgreSQL history retention (latest 10 checks per API)
-- Rate limiting + auth-protected API endpoints
+## Frontend vs backend (read this first)
 
-## Tech Stack
+| | **Backend** | **Frontend** |
+|---|-------------|--------------|
+| **Folder** | Project root (`API_APP/`) | `frontend/` |
+| **What it does** | REST API, WebSocket, DB, job queue | Login, register, dashboard UI |
+| **Start (dev)** | `npm run dev` (from root) | `npm run dev` (from `frontend/`) |
+| **URL (dev)** | http://localhost:4000 | http://localhost:5173 |
 
-- Backend: Node.js, Express, Prisma, PostgreSQL, Redis, BullMQ, WebSocket
-- Frontend: React + Vite + TypeScript
+The backend needs **3 processes**: `server`, `scheduler`, and `worker`. `npm run dev` starts all three.
 
-## 1) Run infrastructure (Postgres + Redis)
+**Full deployment guide:** see [DEPLOY.md](./DEPLOY.md)
+
+## Quickest way to run everything (Docker)
 
 ```bash
-docker compose up -d
+./deploy.sh
+# Open http://localhost:8080
 ```
 
-## 2) Configure environment
-
-Copy `.env.example` to `.env` and adjust if needed:
+## Local development
 
 ```bash
+# 1) Database + Redis
+docker compose up -d postgres redis
+
+# 2) Backend (project root)
 cp .env.example .env
-```
-
-## 3) Install and initialize backend
-
-```bash
 npm install
 npm run prisma:generate
-npm run prisma:migrate
-```
-
-## 4) Run backend processes
-
-Runs all 3 processes in one command:
-
-```bash
+npm run prisma:migrate:deploy
 npm run dev
-```
 
-- API + WebSocket server: `src/server.ts` on `http://localhost:4000`
-- Scheduler: `src/scheduler.ts` (every 5 seconds by default)
-- Worker: `src/worker.ts` (queue consumer, configurable concurrency)
-
-## 5) Run frontend
-
-```bash
+# 3) Frontend (new terminal)
 cd frontend
 npm install
 npm run dev
 ```
 
-Frontend runs at `http://localhost:5173`.
+Open http://localhost:5173
 
-## Architecture (Simple Flow)
+## Features
 
-1. Scheduler reads all monitors and pushes jobs to Redis queue.
-2. Worker consumes jobs, calls monitored APIs, stores checks in Postgres.
-3. Worker trims each API history to latest 10 rows.
-4. Worker publishes update events over Redis pub/sub.
-5. Server broadcasts user-specific updates to browser via WebSocket.
-6. Dashboard updates live every 5 seconds.
+- Postman-style monitor creation (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`)
+- Redis + BullMQ queue architecture
+- Separate scheduler, worker, and server processes
+- WebSocket real-time updates
+- PostgreSQL history (latest 10 checks per API)
+- Rate limiting + JWT auth
 
+## Tech stack
+
+- Backend: Node.js, Express, Prisma, PostgreSQL, Redis, BullMQ, WebSocket
+- Frontend: React, Vite, TypeScript, Tailwind

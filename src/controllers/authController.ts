@@ -32,8 +32,14 @@ export const register = async (req: Request, res: Response) => {
 
     res.json({ message: "User registered", userId: user.id });
   } catch (err) {
+    console.error("[auth/register]", err);
+    const detail =
+      process.env.NODE_ENV !== "production" && err instanceof Error
+        ? err.message
+        : undefined;
     res.status(500).json({
-      message: "Registration failed (database connection issue). Check DATABASE_URL.",
+      message: "Registration failed. Check that Postgres is running and DATABASE_URL is set in .env.",
+      ...(detail ? { detail } : {}),
     });
   }
 };
@@ -66,8 +72,14 @@ export const login = async (req: Request, res: Response) => {
 
     res.json({ token });
   } catch (err) {
+    console.error("[auth/login]", err);
+    const detail =
+      process.env.NODE_ENV !== "production" && err instanceof Error
+        ? err.message
+        : undefined;
     res.status(500).json({
-      message: "Login failed (database connection issue). Check DATABASE_URL.",
+      message: "Login failed. Check that Postgres is running and DATABASE_URL is set in .env.",
+      ...(detail ? { detail } : {}),
     });
   }
 };

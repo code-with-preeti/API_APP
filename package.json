@@ -15,7 +15,9 @@
     "start:worker": "node dist/worker.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "start:prod": "concurrently \"npm run start:server\" \"npm run start:scheduler\" \"npm run start:worker\""
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

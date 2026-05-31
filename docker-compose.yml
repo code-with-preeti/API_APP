@@ -1,3 +1,7 @@
+# Full stack: database + backend (3 processes) + frontend
+# Run everything:  docker compose up -d --build
+# Open the app:     http://localhost:8080
+
 services:
   postgres:
     image: postgres:16
@@ -10,6 +14,11 @@ services:
       - "5433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U api_sentinel -d api_sentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -19,7 +28,51 @@ services:
     volumes:
       - redis_data:/data
 
+  backend:
+    build: .
+    container_name: api-sentinel-backend
+    environment: &backend_env
+      DATABASE_URL: postgres://api_sentinel:api_sentinel@postgres:5432/api_sentinel?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-change-me-use-a-long-random-string}
+      CORS_ORIGIN: http://localhost:8080
+      PORT: "4000"
+      CHECK_INTERVAL_MS: "5000"
+      WORKER_CONCURRENCY: "10"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "4000:4000"
+
+  scheduler:
+    build: .
+    container_name: api-sentinel-scheduler
+    environment: *backend_env
+    depends_on:
+      backend:
+        condition: service_started
+    entrypoint: ["node", "dist/scheduler.js"]
+
+  worker:
+    build: .
+    container_name: api-sentinel-worker
+    environment: *backend_env
+    depends_on:
+      backend:
+        condition: service_started
+    entrypoint: ["node", "dist/worker.js"]
+
+  frontend:
+    build: ./frontend
+    container_name: api-sentinel-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
 volumes:
   pg_data:
   redis_data:
-

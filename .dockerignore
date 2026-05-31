@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+.git
+frontend
+generated
+prisma/generated
+*.md
+deploy.sh
